@@ -26,8 +26,9 @@ def getData(path):
     getFiles(path,data)
     return data
     
-data_path = "/Users/nikolaj/Desktop/rzchowski/161016"
-data = getData(data_path)
+data_path = "/Users/nikolaj/Desktop/rzchowski/161016/1"
+#data = getData(data_path)
+data = glob.glob(data_path+"/*averaged.txt")
 
 file = open("out.txt", "w") 
 file.write("file\tleft_sat(b,v)\tright_sat(b,v)\tleft_slope\tright_slope\tarea\n")
@@ -123,7 +124,7 @@ for q in range(len(data)):
     
     """write to output file"""
     
-    name = data[0].split("/")
+    name = data[q].split("/")
     name = name[len(name)-1]
     name = name[0:len(name)-13]
     
