@@ -26,16 +26,18 @@ def getData(path):
     getFiles(path,data)
     return data
     
+def getxy(path):
+    return int(path[len(path)-18]), int(path[len(path)-14])
+    
 data_path = "/Users/nikolaj/Desktop/rzchowski/161016/1"
 #data = getData(data_path)
 data = glob.glob(data_path+"/*averaged.txt")
 
 file = open("out.txt", "w") 
-file.write("file\tleft_sat(b,v)\tright_sat(b,v)\tleft_slope\tright_slope\tarea\n")
+file.write("x\ty\t\tleft_sat(B)\tleft_sat(V)\tright_sat(B)\tright_sat(V)\tleft_slope\tright_slope\tarea\n")
 
-size = int(np.sqrt(len(data)))+1
-
-f, axarr = plt.subplots(size, size)
+mx, my = getxy(data[len(data)-1])
+f, axarr = plt.subplots(mx+1, my+1)
 
 for line in axarr:
     for curr in line:
@@ -124,19 +126,20 @@ for q in range(len(data)):
     
     """write to output file"""
     
-    name = data[q].split("/")
-    name = name[len(name)-1]
-    name = name[0:len(name)-13]
+    x,y = getxy(data[q])
+    x = str(x)
+    y = str(y)
     
     b = smoothed[0]
     v = smoothed[1]
-    out = str(name)+"\t"+str(b[satleft])+","+str(v[satleft])+"\t"
-    out += str(b[satright])+","+str(v[satright])+"\t"
+    
+    curr = axarr[int(x), int(y)]
+
+    out = x+"\t"+y+"\t"+str(b[satleft])+"\t"+str(v[satleft])+"\t"
+    out += str(b[satright])+"\t"+str(v[satright])+"\t"
     out += str(lslope)+ "\t" + str(rslope)+"\t" + str(area)+"\n"
     file.write(out)
-    
-    curr.set_title(name, fontsize = 10)
-    curr = axarr[q%size, int(q/size)]
+    curr.set_title(x+","+y, fontsize = 10)
     curr.plot(b,v, 'k')
     curr.plot(b[satright],v[satright],'ro', alpha = .5)
     curr.plot(b[satleft],v[satleft],'bo', alpha = .5)
