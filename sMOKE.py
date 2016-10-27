@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 from scipy.signal import argrelextrema
+from os.path import join
 
 
 def getFiles(path, data):
@@ -29,12 +30,14 @@ def getData(path):
 def getxy(path):
     return int(path[len(path)-18]), int(path[len(path)-14])
     
-data_path = "/Users/nikolaj/Desktop/rzchowski/161016/1"
+data_path = r"C:\Users\rzchlab\Google Drive\NickelPMN-PT\291-2\ScMOKE\161016\1"
 #data = getData(data_path)
-data = glob.glob(data_path+"/*averaged.txt")
+data = glob.glob(join(data_path, "*averaged.txt"))
 
-file = open("out.txt", "w") 
-file.write("x\ty\t\tleft_sat(B)\tleft_sat(V)\tright_sat(B)\tright_sat(V)\tleft_slope\tright_slope\tarea\n")
+file = open(join(data_path, "out.txt"), "w") 
+headers = "\t".join(("x", "y", "left_sat(B)", "left_sat(V)", "right_sat(B)", 
+                     "right_sat(V)", "left_slope", "right_slope", "area\n"))
+file.write(headers)
 
 mx, my = getxy(data[len(data)-1])
 f, axarr = plt.subplots(mx+1, my+1)
