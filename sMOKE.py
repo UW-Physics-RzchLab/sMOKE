@@ -57,7 +57,7 @@ def Mrem_of(x, y, ks=3):
     yq03avg = abs(np.mean(yq03[xmq03i-ks:xmq03i+ks]))
     yq12avg = abs(np.mean(yq12[xmq12i-ks:xmq12i+ks]))
     mrem = (yq03avg + yq12avg)/2.
-    return mrem
+    return mrem, np.array((xmq03i, xmq12i))
     
 def saturation_index(x, y, positive_side=True):
     # Compute some constants
@@ -86,6 +86,18 @@ def intercept_indices(y):
         if(y[i-1]<x0 and y[i+1]>x0):
             intercepts[1].append(i)    
     return intercepts[0][-1], intercepts[1][-1]
+    
+def avg_gradient(x, y, center, halfwidth):
+    return np.mean(np.gradient(B[center-halfwidth:center+halfwidth]) / 
+                   np.gradient(V[center-halfwidth:center+halfwidth]))
+                   
+
+def hyst_loop_area(x, y):
+    left, right = np.argmin(x), np.argmax(x)
+    top_area = np.trapz(y[right:left], x[right:left])
+    bottom_area1 = np.trapz(y[0:right], x[0:right])
+    bottom_area2 = np.trapz(y[left:], x[left:])
+    return top_area - (bottom_area1 + bottom_area2)
     
     
 #data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
@@ -143,26 +155,19 @@ for q, df in enumerate(datafiles):
     satright = saturation_index(dB, dV3, positive_side=True)
     satleft = saturation_index(dB, dV3, positive_side=False)
     
-    lintercept, rintercept = intercept_indices(V)
+    # Note that these are indices not values
+    lincept, rincept = intercept_indices(V)
+    width = 10
     
-    # find x0 slope
-    ts = 10
-    lslope = np.mean(np.gradient(B[lintercept-ts:lintercept+ts]) / 
-                     np.gradient(V[lintercept-ts:lintercept+ts]))
-    rslope = np.mean(np.gradient(B[rintercept-ts:rintercept+ts]) / 
-                     np.gradient(V[rintercept-ts:rintercept+ts]))
+    lslope, rslope = (avg_gradient(B, V, i, width) for i in (lincept, rincept))
+    area = hyst_loop_area(B, V)
+
+    # find mrem using JIs algorithm. Should give same value as NRs method,
+    # might as well compute both and compare them. This one returns values
+    # not indices
+    mrem, mrem_inds = Mrem_of(B, V, ks=10)
     
-    # find loop area
-    left=np.argmin(smoothed[0])
-    right=np.argmax(smoothed[0])
-    top_area=np.trapz(smoothed[1][right:left],smoothed[0][right:left])
-    bottom_area1=np.trapz(smoothed[1][0:right],smoothed[0][0:right])
-    bottom_area2=np.trapz(smoothed[1][left:len(smoothed[0])+1],smoothed[0][left:len(smoothed[0])+1])
-    area=top_area-(bottom_area1+bottom_area2)
-    
-    
-    # find mrem and hc
-    mrem = (abs(rintercept) + abs(lintercept)) / 2
+    # TODO: This needs to be checked still
     hc = Hc_of(B,V)
     
     # write to output file  
@@ -172,7 +177,6 @@ for q, df in enumerate(datafiles):
     
     b = smoothed[0]
     v = smoothed[1]
-    
 
     out = x+"\t"+y+"\t"+str(b[satleft])+"\t"+str(v[satleft])+"\t"
     out += str(b[satright])+"\t"+str(v[satright])+"\t"
@@ -185,17 +189,19 @@ for q, df in enumerate(datafiles):
     graph_data = curr.plot(b,v, 'g', alpha = .7)
     curr.plot(b[satright],v[satright],'ro', alpha = .5)
     curr.plot(b[satleft],v[satleft],'bo', alpha = .5)
+    # TODO: plot Hc, mRem(jji version)
+    curr.plot(B[mrem_inds], V[mrem_inds], 'bx', alpha=0.5, ms=10)
     
     mrems[int(x)][int(y)] = mrem
     hcs[int(x)][int(y)] = hc
     
-    ts = ts/1000000
+    ts = width/1e6
     
-    ltanx = [b[lintercept]-ts, b[lintercept]+ts]
-    ltany = [v[lintercept]-ts*lslope, v[lintercept]+ts*lslope]
+    ltanx = [b[lincept]-ts, b[lincept]+ts]
+    ltany = [v[lincept]-ts*lslope, v[lincept]+ts*lslope]
     
-    rtanx = [b[rintercept]-ts, b[rintercept]+ts]
-    rtany = [v[rintercept]-ts*lslope, v[rintercept]+ts*lslope]
+    rtanx = [b[rincept]-ts, b[rincept]+ts]
+    rtany = [v[rincept]-ts*lslope, v[rincept]+ts*lslope]
     
     curr.plot(ltanx, ltany, 'b', linewidth = 2)
     curr.plot(rtanx, rtany, 'r', linewidth = 2)
