@@ -3,8 +3,7 @@
 
 Usage:
     sMOKE.py --help
-    sMOKE.py plotarb --dir=<directory> [--pattern=<pattern>] [--depth=<int>]
-             [--output=<filename>]
+    sMOKE.py plotarb --dir=<directory> [options]
     sMOKE.py plotscan --dir=<directory>
 
 Options:
@@ -21,13 +20,17 @@ Options:
     -o --output=<filename>     Output filename. Output dir will be whatever
                                was passed to the '-d' switch. 
                                [default: out.txt]
+                               
+Examples:
+    sMOKE.py plotarb -d /path/to/data/dir -p .*flag=1.* --depth=2 
+             --output=outputfile.txt 
 """
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 from scipy.signal import argrelextrema
-from os.path import join
+from os.path import join, basename
 from matplotlib.widgets import CheckButtons
 from docopt import docopt
 from retarget import Targeter
@@ -64,7 +67,7 @@ def get_grid_xy(mode, paths):
         return (x + 1), (y + 1)
     elif mode == 'arb':
         x = np.ceil(np.sqrt(len(paths)))
-        return x, x
+        return int(x), int(x)
 
 
 def get_xy(path):
@@ -87,20 +90,24 @@ def Hc_of(x, y, ks=2):
 
 
 def Mrem_of(x, y, ks=3):
-    # Setup indices
     N = len(x)+1
-    inds = np.arange(N).reshape(4, N//4)
-    yq03 = y[inds[[0, 3]]-1].reshape(N//2)  # yq03 = y quarters 0 and 3
-    xq03 = x[inds[[0, 3]]-1].reshape(N//2)
-    yq12 = y[inds[[1, 2]]-1].reshape(N//2)
-    xq12 = x[inds[[1, 2]]-1].reshape(N//2)
+    # Divide into 4 quarters
+    inds = np.arange(N).reshape(4, N//4) - 1
+    yq03 = y[inds[[0, 3]]].reshape(N//2)  # yq03 = y quarters 0 and 3
+    xq03 = x[inds[[0, 3]]].reshape(N//2)
+    yq12 = y[inds[[1, 2]]].reshape(N//2)
+    xq12 = x[inds[[1, 2]]].reshape(N//2)
+    # get indices of B=0 in the half-arrays
     xmq03i = np.argmin(np.abs(xq03))  # xmq03i = indsof x min quarters 0 and 3
     xmq12i = np.argmin(np.abs(xq12))
+    # convert to indices in the full arrays
+    rem_ind_03 = inds[[0, 3]].reshape(N//2)[xmq03i]
+    rem_ind_12 = inds[[1, 2]].reshape(N//2)[xmq12i]
     # Average over the kernel size
     yq03avg = abs(np.mean(yq03[xmq03i-ks:xmq03i+ks]))
     yq12avg = abs(np.mean(yq12[xmq12i-ks:xmq12i+ks]))
     mrem = (yq03avg + yq12avg)/2.
-    return mrem, np.array((xmq03i, xmq12i))
+    return mrem, np.array((rem_ind_03, rem_ind_12))
 
 
 def saturation_index(x, y, positive_side=True):
@@ -194,8 +201,8 @@ hcs = np.zeros((mx, my))
 
 hyst_params = {k: [] for k in hyst_param_labels}
 
-for line in axarr:
-    for curr in line:
+for ax in axarr:
+    for curr in ax:
         curr.spines["left"].set_visible(False)
         curr.spines["right"].set_visible(False)
         curr.spines["top"].set_visible(False)
@@ -205,13 +212,13 @@ for line in axarr:
 
 for q, df in enumerate(datafiles):
     print(df)
-    x, y = np.loadtxt(df, usecols=(0, 1), unpack=True, delimiter='\t',
+    B, V = np.loadtxt(df, usecols=(0, 1), unpack=True, delimiter='\t',
                       skiprows=2)
 
     # smooth data
     smoothed = [[], []]
-    B = smoothed[0] = gaussian_filter(x, 20)
-    V = smoothed[1] = gaussian_filter(y, 20)
+    B = smoothed[0] = gaussian_filter(B, 20)
+    V = smoothed[1] = gaussian_filter(V, 20)
 
     # compute derivatives of data
     dB = smoothed[0]
@@ -251,7 +258,7 @@ for q, df in enumerate(datafiles):
     if mode == 'scan':
         x, y = get_xy(df)
     elif mode == 'arb':
-        n = mx - 1
+        n = mx
         x, y = q // n, q % n
 
     hyst_params['x'].append(x)
@@ -278,28 +285,34 @@ for q, df in enumerate(datafiles):
 #    out += str(lslope) + "\t" + str(rslope) + "\t" + str(area) + "\n"
 #    file.write(out)
 
-    # plot data
-    curr = axarr[int(x), int(y)]
-    curr.set_title("{}, {}".format(x, y), fontsize=10)
-    graph_data = curr.plot(b, v, 'g', alpha=.7)
-    curr.plot(b[satright], v[satright], 'ro', alpha=.5)
-    curr.plot(b[satleft], v[satleft], 'bo', alpha=.5)
+
+    ax = axarr[int(x), int(y)]
+    
+    # Title is coords in scan mode and filename in arb mode
+    if mode == 'scan':
+        title = "{}, {}".format(x, y)
+    elif mode == 'arb':
+        title = "{:.35}".format(basename(df))
+    ax.set_title(title, fontsize=8)
+    
+    # plot data 
+    graph_data = ax.plot(b, v, 'g', alpha=.7)
+    ax.plot(b[satright], v[satright], 'ro', alpha=.5)
+    ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
     # TODO: plot Hc, mRem(jji version)
-    curr.plot(B[mrem_inds], V[mrem_inds], 'bx', alpha=0.5, ms=10)
+    ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3)
 
     mrems[int(x)][int(y)] = mrem
     hcs[int(x)][int(y)] = hc
 
+    # Plot tangent lines
     ts = width/1e6
-
     ltanx = [b[lincept]-ts, b[lincept]+ts]
     ltany = [v[lincept]-ts*lslope, v[lincept]+ts*lslope]
-
     rtanx = [b[rincept]-ts, b[rincept]+ts]
     rtany = [v[rincept]-ts*lslope, v[rincept]+ts*lslope]
-
-    curr.plot(ltanx, ltany, 'b', linewidth=2)
-    curr.plot(rtanx, rtany, 'r', linewidth=2)
+    ax.plot(ltanx, ltany, 'b', linewidth=2)
+    ax.plot(rtanx, rtany, 'r', linewidth=2)
 
 
 # plot hc and mrem
