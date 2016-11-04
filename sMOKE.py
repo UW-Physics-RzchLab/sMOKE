@@ -59,6 +59,23 @@ def Mrem_of(x, y, ks=3):
     mrem = (yq03avg + yq12avg)/2.
     return mrem, np.array((xmq03i, xmq12i))
     
+def better_Hc_of(x,y):
+    i = intercept_indices(y)
+    return (np.abs(x[i[0]])+np.abs(x[i[1]]))/2
+    
+def better_Mrem_of(x,y):
+    i = intercept_indices(y)
+    intercepts = [[],[]]
+    y0 = (x[i[0]]+x[i[1]])/2
+    for i in range(1,len(y)-1):
+        if(x[i-1]>y0 and x[i+1]<y0):
+            intercepts[0].append(i)
+        if(x[i-1]<y0 and x[i+1]>y0):
+            intercepts[1].append(i)    
+    i = intercepts[0][-1], intercepts[1][-1]
+    return (np.abs(y[i[0]])+np.abs(y[i[1]]))/2
+
+    
 def saturation_index(x, y, positive_side=True):
     # Compute some constants
     high, low = np.max(y)/2, np.min(y)/2
@@ -87,6 +104,7 @@ def intercept_indices(y):
             intercepts[1].append(i)    
     return intercepts[0][-1], intercepts[1][-1]
     
+    
 def avg_gradient(x, y, center, halfwidth):
     return np.mean(np.gradient(B[center-halfwidth:center+halfwidth]) / 
                    np.gradient(V[center-halfwidth:center+halfwidth]))
@@ -100,8 +118,8 @@ def hyst_loop_area(x, y):
     return top_area - (bottom_area1 + bottom_area2)
     
     
-#data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
-data_path = r"C:\Users\rzchlab\Desktop\trial1_5x5_BFO_test_sample\trial1_5x5_BFO_test_sample"
+data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
+#data_path = r"C:\Users\rzchlab\Desktop\trial1_5x5_BFO_test_sample\trial1_5x5_BFO_test_sample"
 
 # Get the list of files with hysteresis loop data in them
 datafiles = glob.glob(join(data_path, "*averaged.txt"))
@@ -166,9 +184,15 @@ for q, df in enumerate(datafiles):
     # might as well compute both and compare them. This one returns values
     # not indices
     mrem, mrem_inds = Mrem_of(B, V, ks=10)
+    moreaccuratemrem = better_Mrem_of(B,V)
     
     # TODO: This needs to be checked still
     hc = Hc_of(B,V)
+    moreaccuratehc = better_Hc_of(B,V)
+    
+    print(hc)
+    print(moreaccuratehc)
+    
     
     # write to output file  
     x,y = getxy(df)
@@ -208,33 +232,67 @@ for q, df in enumerate(datafiles):
 
     
 # plot hc and mrem
+legend_string_hc="hc\n"
+for y, line in enumerate(hcs): 
+    for x, val in enumerate(line):
+        legend_string_hc += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
+            
+legend_string_mrem="mrem values\n"
+for y, line in enumerate(mrems): 
+    for x, val in enumerate(line):
+        legend_string_mrem += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
+
+hc_text = f.text(.91, 0.1, legend_string_hc)
+mrem_text = f.text(.91, 0.1, legend_string_mrem, visible = False)
+
 def switch(label):
     vals = []
-
+    recolor = False
+    
     if(label == 'hc'):
         vals = mrems
         check.labels[0].set_text('mrem')
+
+        recolor = True
+        hc_text.set_visible(False)
+        mrem_text.set_visible(False)
+        
+        check.labels[1].set_text('show\nvalues')
+
+        
     if(label == 'mrem'):
         vals = hcs
         check.labels[0].set_text('hc')
-    for y,line in enumerate(axarr):
-        for x,curr in enumerate(line):
-                curr.set_axis_bgcolor(str(vals[x][y]/np.max(vals)))
+        recolor = True
+        hc_text.set_visible(False)
+        mrem_text.set_visible(False)
 
-    legend_string="hc/mrem values \n"
-    for y, line in enumerate(vals): 
-        for x, val in enumerate(line):
-            legend_string += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
-    if(label == 'show\nvalues'):
-        f.text(0, 0, 'hi', visible = False)
-        label = 'hide\nvalues'
+        check.labels[1].set_text('show\nvalues')
+
+    if recolor:
+        for y,line in enumerate(axarr):
+            for x,curr in enumerate(line):
+                    curr.set_axis_bgcolor(str(vals[x][y]/np.max(vals)))
+
+
     if(label == 'hide\nvalues'):
-        f.text(.91, 0, legend_string)
-        label = 'show\nvalues'
+        hc_text.set_visible(False)
+        mrem_text.set_visible(False)
+        check.labels[1].set_text('show\nvalues')
+        
+    if(label == 'show\nvalues'):
+
+        if(check.labels[0].get_text() == 'hc'):
+            hc_text.set_visible(True)
+        if(check.labels[0].get_text() == 'mrem'):
+            mrem_text.set_visible(True)
+        check.labels[1].set_text('hide\nvalues')
+
     plt.draw()
 
-rax = plt.axes([0.01, 0.4, 0.095, 0.15])
+rax = plt.axes([0.01, .4, 0.095, 0.15])
 check = CheckButtons(rax, ('hc', 'show\nvalues'),  (True, False))
+switch('hc')
 check.on_clicked(switch)
 
 
