@@ -112,7 +112,7 @@ def Mrem_of(x, y, ks=3):
     yq03avg = abs(np.mean(yq03[xmq03i-ks:xmq03i+ks]))
     yq12avg = abs(np.mean(yq12[xmq12i-ks:xmq12i+ks]))
     mrem = (yq03avg + yq12avg)/2.
-    return mrem, np.array((xmq03i, xmq12i))
+    return mrem, np.array((rem_ind_03, rem_ind_12))
 
 
 def better_Hc_of(x, y):
