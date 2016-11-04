@@ -67,8 +67,8 @@ def better_Mrem_of(x,y):
     i = intercept_indices(y)
     intercepts = [[],[]]
     y0 = (x[i[0]]+x[i[1]])/2
-    for i in range(1,len(y)-1):
-        if(x[i-1]>y0 and x[i+1]<y0):
+    for i in range(1, len(y)-1):
+        if(x[i-1] > y0 and x[i+1] < y0):
             intercepts[0].append(i)
         if(x[i-1]<y0 and x[i+1]>y0):
             intercepts[1].append(i)    
