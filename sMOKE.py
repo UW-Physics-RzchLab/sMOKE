@@ -15,15 +15,15 @@ Options:
     -p --pattern=<pattern>     Regex used to select files to be plotted
                                [default: .*]
     -n --depth=<int>           Number of levels down in the file tree to search
-                               for data files when in 'plotarb' mode. 
+                               for data files when in 'plotarb' mode.
                                [default: 1]
     -o --output=<filename>     Output filename. Output dir will be whatever
-                               was passed to the '-d' switch. 
+                               was passed to the '-d' switch.
                                [default: out.txt]
-                               
+
 Examples:
-    sMOKE.py plotarb -d /path/to/data/dir -p .*flag=1.* --depth=2 
-             --output=outputfile.txt 
+    sMOKE.py plotarb -d /path/to/data/dir -p .*flag=1.* --depth=2
+             --output=outputfile.txt
 """
 import glob
 import numpy as np
@@ -37,24 +37,17 @@ from retarget import Targeter
 
 """
 Todo
- - Should have two modes for file input:
-     - Takes a whole folder from the scanning moke program. Recognizes the
-       coordinates from each filename, plots data from each file on
-       appropriate location of a grid.
-     - Takes an arbitrary set of files and plots them in a grid. Chooses
-       grid size as smallest square that will fit the number of plots. Labels
-       each grid with basename of datafile.
-       
- - Use np.savetxt to write the 'out.txt' file
- 
- Here is header:
-x y left_sat(B) left_sat(V) right_sat(B) right_sat(V) left_slope right_slope area
+ - way to rotate coordinates
+     - 'origin' flag chooses between '(N|S)(E|W)'
+     - define +x and +y as (N|E|S|W)
+ - fix interactivity
 
 """
 
 ###############################################################################
 # Functions
 ###############################################################################
+
 
 def get_grid_xy(mode, paths):
     """Get size of grid required to plot data. Read from data file name if
@@ -159,196 +152,221 @@ def get_data_files(mode, data_path, pattern=None, depth=1):
     elif mode == 'arb':
         t = Targeter()
         return t.acquire(data_path, pattern=pattern, depth=depth)
-        
+
+
+def get_axarr_coords(origin, xplus, yplus, N, i, j):
+    origin, xplus, yplus = (x.upper() for x in (origin, xplus, yplus))
+    verify_directions(origin, xplus, yplus)
+    xh, yh, zh = np.array((1, 0, 0)), np.array((0, 1, 0)), np.array((0, 0, 1))
+    unit_vs = {'N': yh, 'E': xh,
+               'S': -yh, 'W': -xh}
+    deg_ccw = {'NW': 0, 'NE': -90, 'SE': 180, 'SW': 90}
+    need_trans = (-zh == np.cross(unit_vs[xplus], unit_vs[yplus])).all()
+    if need_trans:
+        i, j = j, i
+    return matrix_rotate_indices(N, i, j, deg_ccw[origin])
+    
+
+def verify_directions(origin, xplus, yplus):
+    if (origin[0] not in ('N', 'S')) or (origin[1] not in ('E', 'W')):
+        raise ValueError('Parameter "origin" must be "(N|S)(E|W)" w/o parens.')
+    total = origin + xplus + yplus
+    for c in 'NESW':
+        if total.count(c) != 1:
+            emsg = 'xplus and yplus must use the two directions not in origin'
+            raise ValueError(emsg)
+
+def matrix_rotate_indices(N, i, j, deg_ccw):
+    N -= 1
+    d = {0: (i, j), 90: (N - j, i), -90: (j, N - i), 180: (N - i, N - j)}
+    try:
+        return d[deg_ccw]
+    except KeyError:
+        raise ValueError('Parameter deg_ccw must be one of (0, 90, -90, 180).')
+
 ###############################################################################
 # Begin Execution
 ###############################################################################
-        
-plt.ion()
 
-d = docopt(__doc__)
-print(d)
+if __name__ == '__main__':
 
-# Parse command line args
-mode = 'scan' if d['plotscan'] else 'arb'
-data_path = d['--dir']
-pattern = d['--pattern']
-depth = int(d['--depth'])
-savefilename = d['--output']
+    plt.ion()
 
-# Get the list of files with hysteresis loop data in them
-# data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
-# data_path = r"C:\Users\rzchlab\Desktop\trial1_5x5_BFO_test_sample\trial1_5x5_BFO_test_sample"
-datafiles = get_data_files(mode, data_path, pattern=pattern, depth=depth)
+    d = docopt(__doc__)
+    print(d)
 
-#savefilepath = join(data_path, "out.txt")
-#file = open(savefilepath, "w")
-hyst_param_labels = ("x", "y",
-                     "left_Hc", "right_Hc",
-                     "top_Mr", "bot_Mr",
-                     "left_sat(B)", "left_sat(V)",
-                     "right_sat(B)", "right_sat(V)",
-                     "left_slope", "right_slope",
-                     "area")
-#headers = "".join("{:14}\t".format(s) for s in hyst_param_labels) + "\n"
-#file.write(headers)
+    # Parse command line args
+    mode = 'scan' if d['plotscan'] else 'arb'
+    data_path = d['--dir']
+    pattern = d['--pattern']
+    depth = int(d['--depth'])
+    savefilename = d['--output']
 
-mx, my = get_grid_xy(mode, datafiles)
-fig, axarr = plt.subplots(mx, my)
+    # Get the list of files with hysteresis loop data in them
+    # data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
+    # data_path = r"C:\Users\rzchlab\Desktop\trial1_5x5_BFO_test_sample\trial1_5x5_BFO_test_sample"
+    datafiles = get_data_files(mode, data_path, pattern=pattern, depth=depth)
 
-mrems = np.zeros((mx, my))
-hcs = np.zeros((mx, my))
+    #savefilepath = join(data_path, "out.txt")
+    #file = open(savefilepath, "w")
+    hyst_param_labels = ("x", "y",
+                         "left_Hc", "right_Hc",
+                         "top_Mr", "bot_Mr",
+                         "left_sat(B)", "left_sat(V)",
+                         "right_sat(B)", "right_sat(V)",
+                         "left_slope", "right_slope",
+                         "area")
+    #headers = "".join("{:14}\t".format(s) for s in hyst_param_labels) + "\n"
+    #file.write(headers)
 
-hyst_params = {k: [] for k in hyst_param_labels}
+    mx, my = get_grid_xy(mode, datafiles)
+    fig, axarr = plt.subplots(mx, my)
 
-for ax in axarr:
-    for curr in ax:
-        curr.spines["left"].set_visible(False)
-        curr.spines["right"].set_visible(False)
-        curr.spines["top"].set_visible(False)
-        curr.spines["bottom"].set_visible(False)
-        curr.xaxis.set_visible(False)
-        curr.yaxis.set_visible(False)
+    mrems = np.zeros((mx, my))
+    hcs = np.zeros((mx, my))
 
-for q, df in enumerate(datafiles):
-    print(df)
-    B, V = np.loadtxt(df, usecols=(0, 1), unpack=True, delimiter='\t',
-                      skiprows=2)
+    hyst_params = {k: [] for k in hyst_param_labels}
 
-    # smooth data
-    smoothed = [[], []]
-    B = smoothed[0] = gaussian_filter(B, 20)
-    V = smoothed[1] = gaussian_filter(V, 20)
+    for ax in axarr:
+        for curr in ax:
+            curr.spines["left"].set_visible(False)
+            curr.spines["right"].set_visible(False)
+            curr.spines["top"].set_visible(False)
+            curr.spines["bottom"].set_visible(False)
+            curr.xaxis.set_visible(False)
+            curr.yaxis.set_visible(False)
 
-    # compute derivatives of data
-    dB = smoothed[0]
-    dV = np.gradient(smoothed[1])
-    dV2 = gaussian_filter(np.gradient(dV), 10)
-    dV3 = np.gradient(dV2)
+    for q, df in enumerate(datafiles):
+        print(df)
+        B, V = np.loadtxt(df, usecols=(0, 1), unpack=True, delimiter='\t',
+                          skiprows=2)
 
-    # find saturation points, satright and satleft
-    high = np.max(dV3)/2
-    low = np.min(dV3)/2
-    mag = np.abs(high-low)
-    upper = high - mag/4
-    lower = low + mag/4
+        # smooth data
+        smoothed = [[], []]
+        B = smoothed[0] = gaussian_filter(B, 20)
+        V = smoothed[1] = gaussian_filter(V, 20)
 
-    # Find the index where saturation is reached on each side of the loop.
-    # This is done by finding a the peak in the third derivative of V with
-    # the largest/smallest B value (depending on the side of the loop).
-    satright = saturation_index(dB, dV3, positive_side=True)
-    satleft = saturation_index(dB, dV3, positive_side=False)
+        # compute derivatives of data
+        dB = smoothed[0]
+        dV = np.gradient(smoothed[1])
+        dV2 = gaussian_filter(np.gradient(dV), 10)
+        dV3 = np.gradient(dV2)
 
-    # Note that these are indices not values
-    lincept, rincept = intercept_indices(V)
-    width = 10
+        # find saturation points, satright and satleft
+        high = np.max(dV3)/2
+        low = np.min(dV3)/2
+        mag = np.abs(high-low)
+        upper = high - mag/4
+        lower = low + mag/4
 
-    lslope, rslope = (avg_gradient(B, V, i, width) for i in (lincept, rincept))
-    area = hyst_loop_area(B, V)
+        # Find the index where saturation is reached on each side of the loop.
+        # This is done by finding a the peak in the third derivative of V with
+        # the largest/smallest B value (depending on the side of the loop).
+        satright = saturation_index(dB, dV3, positive_side=True)
+        satleft = saturation_index(dB, dV3, positive_side=False)
 
-    # find mrem using JIs algorithm. Should give same value as NRs method,
-    # might as well compute both and compare them. This one returns values
-    # not indices
-    mrem, mrem_inds = Mrem_of(B, V, ks=10)
+        # Note that these are indices not values
+        lincept, rincept = intercept_indices(V)
+        width = 10
 
-    # TODO: This needs to be checked still
-    hc = Hc_of(B, V)
+        lslope, rslope = (avg_gradient(B, V, i, width) for i in (lincept, rincept))
+        area = hyst_loop_area(B, V)
 
-    # write to output file
-    if mode == 'scan':
-        x, y = get_xy(df)
-    elif mode == 'arb':
-        n = mx
-        x, y = q // n, q % n
+        # find mrem using JIs algorithm. Should give same value as NRs method,
+        # might as well compute both and compare them. This one returns values
+        # not indices
+        mrem, mrem_inds = Mrem_of(B, V, ks=10)
 
-    hyst_params['x'].append(x)
-    hyst_params['y'].append(y)
-    hyst_params['left_Hc'].append(B[lincept])
-    hyst_params['right_Hc'].append(B[rincept])
-    hyst_params['top_Mr'].append(V[mrem_inds[0]])
-    hyst_params['bot_Mr'].append(V[mrem_inds[1]])
-    hyst_params['right_sat(B)'].append(B[satright])
-    hyst_params['right_sat(V)'].append(V[satright])
-    hyst_params['left_sat(B)'].append(B[satleft])
-    hyst_params['left_sat(V)'].append(V[satleft])
-    hyst_params['area'].append(area)
-    hyst_params['left_slope'].append(lslope)
-    hyst_params['right_slope'].append(rslope)
+        # TODO: This needs to be checked still
+        hc = Hc_of(B, V)
 
-    b = smoothed[0]
-    v = smoothed[1]
+        # write to output file
+        if mode == 'scan':
+            x, y = get_xy(df)
+        elif mode == 'arb':
+            n = mx
+            x, y = q // n, q % n
 
-#    x = str(x)
-#    y = str(y)
-#    out = x+"\t"+y+"\t"+str(b[satleft])+"\t"+str(v[satleft])+"\t"
-#    out += str(b[satright])+"\t"+str(v[satright])+"\t"
-#    out += str(lslope) + "\t" + str(rslope) + "\t" + str(area) + "\n"
-#    file.write(out)
+        hyst_params['x'].append(x)
+        hyst_params['y'].append(y)
+        hyst_params['left_Hc'].append(B[lincept])
+        hyst_params['right_Hc'].append(B[rincept])
+        hyst_params['top_Mr'].append(V[mrem_inds[0]])
+        hyst_params['bot_Mr'].append(V[mrem_inds[1]])
+        hyst_params['right_sat(B)'].append(B[satright])
+        hyst_params['right_sat(V)'].append(V[satright])
+        hyst_params['left_sat(B)'].append(B[satleft])
+        hyst_params['left_sat(V)'].append(V[satleft])
+        hyst_params['area'].append(area)
+        hyst_params['left_slope'].append(lslope)
+        hyst_params['right_slope'].append(rslope)
 
+        b = smoothed[0]
+        v = smoothed[1]
 
-    ax = axarr[int(x), int(y)]
-    
-    # Title is coords in scan mode and filename in arb mode
-    if mode == 'scan':
-        title = "{}, {}".format(x, y)
-    elif mode == 'arb':
-        title = "{:.35}".format(basename(df))
-    ax.set_title(title, fontsize=8)
-    
-    # plot data 
-    graph_data = ax.plot(b, v, 'g', alpha=.7)
-    ax.plot(b[satright], v[satright], 'ro', alpha=.5)
-    ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
-    # TODO: plot Hc, mRem(jji version)
-    ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3)
+        ax = axarr[int(x), int(y)]
 
-    mrems[int(x)][int(y)] = mrem
-    hcs[int(x)][int(y)] = hc
+        # Title is coords in scan mode and filename in arb mode
+        if mode == 'scan':
+            title = "{}, {}".format(x, y)
+        elif mode == 'arb':
+            title = "{:.35}".format(basename(df))
+        ax.set_title(title, fontsize=8)
 
-    # Plot tangent lines
-    ts = width/1e6
-    ltanx = [b[lincept]-ts, b[lincept]+ts]
-    ltany = [v[lincept]-ts*lslope, v[lincept]+ts*lslope]
-    rtanx = [b[rincept]-ts, b[rincept]+ts]
-    rtany = [v[rincept]-ts*lslope, v[rincept]+ts*lslope]
-    ax.plot(ltanx, ltany, 'b', linewidth=2)
-    ax.plot(rtanx, rtany, 'r', linewidth=2)
+        # plot data
+        graph_data = ax.plot(b, v, 'g', alpha=.7)
+        ax.plot(b[satright], v[satright], 'ro', alpha=.5)
+        ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
+        # TODO: plot Hc, mRem(jji version)
+        ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3)
+
+        mrems[int(x)][int(y)] = abs(V[mrem_inds[0]] - V[mrem_inds[1]]) / 2
+        hcs[int(x)][int(y)] = abs(B[lincept] - B[rincept]) / 2
+
+        # Plot tangent lines
+        ts = width/1e6
+        ltanx = [b[lincept]-ts, b[lincept]+ts]
+        ltany = [v[lincept]-ts*lslope, v[lincept]+ts*lslope]
+        rtanx = [b[rincept]-ts, b[rincept]+ts]
+        rtany = [v[rincept]-ts*lslope, v[rincept]+ts*lslope]
+        ax.plot(ltanx, ltany, 'b', linewidth=2)
+        ax.plot(rtanx, rtany, 'r', linewidth=2)
 
 
-# plot hc and mrem
-def switch(label):
-    vals = []
+    # plot hc and mrem
+    def switch(label):
+        vals = []
 
-    if(label == 'hc'):
-        vals = mrems
-        check.labels[0].set_text('mrem')
-    if(label == 'mrem'):
-        vals = hcs
-        check.labels[0].set_text('hc')
-    for y, line in enumerate(axarr):
-        for x, curr in enumerate(line):
-                curr.set_axis_bgcolor(str(vals[x][y]/np.max(vals)))
+        if(label == 'hc'):
+            vals = mrems
+            check.labels[0].set_text('mrem')
+        if(label == 'mrem'):
+            vals = hcs
+            check.labels[0].set_text('hc')
+        for y, line in enumerate(axarr):
+            for x, curr in enumerate(line):
+                    curr.set_axis_bgcolor(str(vals[x][y]/np.max(vals)))
 
-    legend_string = "hc/mrem values \n"
-    for y, line in enumerate(vals):
-        for x, val in enumerate(line):
-            legend_string += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
-    if(label == 'show\nvalues'):
-        fig.text(0, 0, 'hi', visible=False)
-        label = 'hide\nvalues'
-    if(label == 'hide\nvalues'):
-        fig.text(.91, 0, legend_string)
-        label = 'show\nvalues'
-    plt.draw()
+        legend_string = "hc/mrem values \n"
+        for y, line in enumerate(vals):
+            for x, val in enumerate(line):
+                legend_string += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
+        if(label == 'show\nvalues'):
+            fig.text(0, 0, 'hi', visible=False)
+            label = 'hide\nvalues'
+        if(label == 'hide\nvalues'):
+            fig.text(.91, 0, legend_string)
+            label = 'show\nvalues'
+        plt.draw()
 
-rax = plt.axes([0.01, 0.4, 0.095, 0.15])
-check = CheckButtons(rax, ('hc', 'show\nvalues'),  (True, False))
-check.on_clicked(switch)
+    rax = plt.axes([0.01, 0.4, 0.095, 0.15])
+    check = CheckButtons(rax, ('hc', 'show\nvalues'),  (True, False))
+    check.on_clicked(switch)
 
-savefilepath = join(data_path, savefilename)
-h0 = "{:1}\t{:1}\t".format(*hyst_param_labels[:2])
-header = h0 + "".join("{:14}\t".format(s) for s in hyst_param_labels[2:])
-savedata = np.array(list(hyst_params[col] for col in hyst_param_labels))
-fmts = ["%3d", "%.1d"] + ["%+.7e"] * (len(hyst_param_labels) - 2)
-np.savetxt(savefilepath, savedata.T, fmt=fmts, delimiter="\t",
-           header=header)
+    savefilepath = join(data_path, savefilename)
+    h0 = "{:1}\t{:1}\t".format(*hyst_param_labels[:2])
+    header = h0 + "".join("{:14}\t".format(s) for s in hyst_param_labels[2:])
+    savedata = np.array(list(hyst_params[col] for col in hyst_param_labels))
+    fmts = ["%3d", "%.1d"] + ["%+.7e"] * (len(hyst_param_labels) - 2)
+    np.savetxt(savefilepath, savedata.T, fmt=fmts, delimiter="\t",
+               header=header)
