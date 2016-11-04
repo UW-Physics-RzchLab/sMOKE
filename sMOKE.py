@@ -20,6 +20,18 @@ Options:
     -o --output=<filename>     Output filename. Output dir will be whatever
                                was passed to the '-d' switch.
                                [default: out.txt]
+    -O --orientation=<NESW>    A string with some permutation of the characters
+                               'NESW' (cardinal directions). The first two
+                               characters specify the location of the origin
+                               (0, 0) on the figure. For example, NE would 
+                               be the upper right. The third character is the
+                               +x direction and the fourth character is the +y
+                               direction. For example SENW means (0,0) is at 
+                               the lower right of the figure, (i, 0) is i 
+                               rows above (0, 0) and (0, j) is j columns to
+                               the left of (0, 0).                               
+                               [default: NWSE]
+    --
 
 Examples:
     sMOKE.py plotarb -d /path/to/data/dir -p .*flag=1.* --depth=2
@@ -201,6 +213,9 @@ if __name__ == '__main__':
     pattern = d['--pattern']
     depth = int(d['--depth'])
     savefilename = d['--output']
+    savefilename = 'out.txt' if savefilename is None else savefilename
+    orien = d['--orientation'].upper()
+    origin, xplus, yplus = orien[:2], orien[2], orien[3]
 
     # Get the list of files with hysteresis loop data in them
     # data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
@@ -304,7 +319,8 @@ if __name__ == '__main__':
         b = smoothed[0]
         v = smoothed[1]
 
-        ax = axarr[int(x), int(y)]
+        i_ax, j_ax = get_axarr_coords(origin, xplus, yplus, mx, x, y)
+        ax = axarr[i_ax, j_ax]
 
         # Title is coords in scan mode and filename in arb mode
         if mode == 'scan':
