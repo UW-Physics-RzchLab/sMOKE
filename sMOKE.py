@@ -12,6 +12,7 @@ Options:
                                plotted. If 'plotscan' this needs to be the
                                directory that was output by the scanning
                                MOKE labview program.
+    -c --cols=<tuple>        Columns to read from data files. Of form (x,y).
     -p --pattern=<pattern>     Regex used to select files to be plotted
                                [default: .*]
     -n --depth=<int>           Number of levels down in the file tree to search
@@ -31,8 +32,20 @@ Options:
                                rows above (0, 0) and (0, j) is j columns to
                                the left of (0, 0).
                                [default: NWSE]
-    --
-
+    --showaxes                 By default the axes around the loops are not
+                               drawn. Pass this parameter to draw them.
+    --verbose                  Print out more messages.
+    --folderisid               Means that the directory of the data, not the
+                               filename of the data has the identifying name.
+                               For example, maybe data is stored in dirs with
+                               the scheme `1000/, 1001/, ...` but each file
+                               has the name `data.txt`. Then pass this argument
+                               to see the folder name not `data.txt` in the
+                               plot and parameters output file.
+    --samelims                 Plot all data with same axes lims.
+                               NOT YET IMPLEMENTED.
+    --norm=<mode>              Normalize data using a certain mode.
+                               NOT YET IMPLEMENTED.
 Examples:
     sMOKE.py plotarb -d /path/to/data/dir -p .*flag=1.* --depth=2
              --output=outputfile.txt
@@ -42,10 +55,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 from scipy.signal import argrelextrema
-from os.path import join, basename
+from os.path import join, basename, dirname
 from matplotlib.widgets import CheckButtons
 from docopt import docopt
 from retarget import Targeter
+from pprint import pprint as pp
+from ast import literal_eval
 
 """
 Todo
@@ -59,6 +74,8 @@ Todo
 ###############################################################################
 # Functions
 ###############################################################################
+
+# Utility ################################################
 
 
 def get_grid_xy(mode, paths):
@@ -81,22 +98,106 @@ def get_xy(path):
     return int(path[len(path)-18]), int(path[len(path)-14])
 
 
-def Hc_of(x, y, ks=2):
-    # Setup indices
-    gt0idx = x >= 0
-    lt0idx = x < 0
-    ymgt0idx = np.argmin(np.abs(y[gt0idx]))
-    ymlt0idx = np.argmin(np.abs(y[lt0idx]))
-    # Compute Hc
-    Hc_gt0 = x[gt0idx][ymgt0idx - ks:ymgt0idx + ks].mean()
-    Hc_lt0 = x[lt0idx][ymlt0idx - ks:ymlt0idx + ks].mean()
-    Hc_avg = (abs(Hc_gt0) + abs(Hc_lt0))/2.
-    return Hc_avg
+def get_data_files(mode, data_path, pattern=None, depth=1):
+    if mode == 'scan':
+        return glob.glob(join(data_path, "*averaged.txt"))
+    elif mode == 'arb':
+        t = Targeter()
+        return t.acquire(data_path, pattern=pattern, depth=depth)
+
+
+def get_axarr_coords(origin, xplus, yplus, N, i, j):
+    origin, xplus, yplus = (x.upper() for x in (origin, xplus, yplus))
+    verify_directions(origin, xplus, yplus)
+    xh, yh, zh = np.array((1, 0, 0)), np.array((0, 1, 0)), np.array((0, 0, 1))
+    unit_vs = {'N': yh, 'E': xh,
+               'S': -yh, 'W': -xh}
+    deg_ccw = {'NW': 0, 'NE': -90, 'SE': 180, 'SW': 90}
+    need_trans = (-zh == np.cross(unit_vs[xplus], unit_vs[yplus])).all()
+    if need_trans:
+        i, j = j, i
+    return matrix_rotate_indices(N, i, j, deg_ccw[origin])
+
+
+def verify_directions(origin, xplus, yplus):
+    if (origin[0] not in ('N', 'S')) or (origin[1] not in ('E', 'W')):
+        raise ValueError('Parameter "origin" must be "(N|S)(E|W)" w/o parens.')
+    total = origin + xplus + yplus
+    for c in 'NESW':
+        if total.count(c) != 1:
+            emsg = 'xplus and yplus must use the two directions not in origin'
+            raise ValueError(emsg)
+
+
+def matrix_rotate_indices(N, i, j, deg_ccw):
+    N -= 1
+    d = {0: (i, j), 90: (N - j, i), -90: (j, N - i), 180: (N - i, N - j)}
+    try:
+        return d[deg_ccw]
+    except KeyError:
+        raise ValueError('Parameter deg_ccw must be one of (0, 90, -90, 180).')
+
+
+def isiterable(x):
+    try:
+        iter(x)
+        return True
+    except TypeError:
+        return False
+
+
+def compress_data(data, n):
+    """For each sequence in data average every n points together to make
+    a new sequence of length len(data)/n (this division must not leave
+    remaineder).
+    """
+    if len(data) == 0:
+        return []
+    if len(data[0]) % n != 0:
+        raise ValueError('n must divide len(data[i]) for every i')
+    compd_data = []
+    for d in data:
+        compd_data.append(
+            np.array(list(d[x:x+n].mean() for x in range(0, len(d), n))))
+    return compd_data
+
+
+def printif(x, condition):
+    if condition:
+        print(x)
+
+
+def ppif(x, condition):
+    if condition:
+        pp(x)
+
+
+def generate_rowheaders(datafiles, title_func):
+    return np.array(list(title_func(df) for df in datafiles))
+
+
+def length_of_longest_el(arr):
+    return len(sorted(arr, key=len)[-1])
+
+
+# Parameter Extraction ################################################
+
+
+def Hc_of(x, y, avg_width=2):
+    N = len(y)
+    yc = y - y.mean()  # y-centered
+    ych0, ych1 = yc[:N//2], yc[N//2:]  # y-centered-half0/1
+    hc_indices = list(np.argmin(np.abs(y)) for y in (ych0, ych1))
+    hc_indices[1] += N//2
+    Hc_avgs = tuple(x[i - avg_width:i + avg_width].mean() for i in hc_indices)
+    Hc = abs(Hc_avgs[1] - Hc_avgs[0])
+    return Hc, np.array(hc_indices)
 
 
 def Mrem_of(x, y, ks=3):
-    N = len(x)+1
+    N = len(x)
     # Divide into 4 quarters
+    #    import pdb; pdb.set_trace()
     inds = np.arange(N).reshape(4, N//4) - 1
     yq03 = y[inds[[0, 3]]].reshape(N//2)  # yq03 = y quarters 0 and 3
     xq03 = x[inds[[0, 3]]].reshape(N//2)
@@ -154,13 +255,16 @@ def saturation_index(x, y, positive_side=True):
 
 
 def intercept_indices(y):
-    """ [description of algorithm and assumptions]"""
-    intercepts = [[], []]
-    x0 = np.average(y)
+    """Looks for the indices in y where the mean is crossed. If this
+    condition is never met then it returns the middle of the array.
+    """
+    i_mid = len(y) // 2
+    intercepts = [[i_mid], [i_mid]]
+    y0 = np.average(y)
     for i in range(1, len(y) - 1):
-        if(y[i - 1] > x0 and y[i + 1] < x0):
+        if(y[i - 1] > y0 and y[i + 1] < y0):
             intercepts[0].append(i)
-        if(y[i - 1] < x0 and y[i + 1] > x0):
+        if(y[i - 1] < y0 and y[i + 1] > y0):
             intercepts[1].append(i)
     return intercepts[0][-1], intercepts[1][-1]
 
@@ -178,45 +282,6 @@ def hyst_loop_area(x, y):
     return top_area - (bottom_area1 + bottom_area2)
 
 
-def get_data_files(mode, data_path, pattern=None, depth=1):
-    if mode == 'scan':
-        return glob.glob(join(data_path, "*averaged.txt"))
-    elif mode == 'arb':
-        t = Targeter()
-        return t.acquire(data_path, pattern=pattern, depth=depth)
-
-
-def get_axarr_coords(origin, xplus, yplus, N, i, j):
-    origin, xplus, yplus = (x.upper() for x in (origin, xplus, yplus))
-    verify_directions(origin, xplus, yplus)
-    xh, yh, zh = np.array((1, 0, 0)), np.array((0, 1, 0)), np.array((0, 0, 1))
-    unit_vs = {'N': yh, 'E': xh,
-               'S': -yh, 'W': -xh}
-    deg_ccw = {'NW': 0, 'NE': -90, 'SE': 180, 'SW': 90}
-    need_trans = (-zh == np.cross(unit_vs[xplus], unit_vs[yplus])).all()
-    if need_trans:
-        i, j = j, i
-    return matrix_rotate_indices(N, i, j, deg_ccw[origin])
-
-
-def verify_directions(origin, xplus, yplus):
-    if (origin[0] not in ('N', 'S')) or (origin[1] not in ('E', 'W')):
-        raise ValueError('Parameter "origin" must be "(N|S)(E|W)" w/o parens.')
-    total = origin + xplus + yplus
-    for c in 'NESW':
-        if total.count(c) != 1:
-            emsg = 'xplus and yplus must use the two directions not in origin'
-            raise ValueError(emsg)
-
-
-def matrix_rotate_indices(N, i, j, deg_ccw):
-    N -= 1
-    d = {0: (i, j), 90: (N - j, i), -90: (j, N - i), 180: (N - i, N - j)}
-    try:
-        return d[deg_ccw]
-    except KeyError:
-        raise ValueError('Parameter deg_ccw must be one of (0, 90, -90, 180).')
-
 ###############################################################################
 # Begin Execution
 ###############################################################################
@@ -226,25 +291,41 @@ if __name__ == '__main__':
     plt.ion()
 
     d = docopt(__doc__)
-    print(d)
 
     # Parse command line args
     mode = 'scan' if d['plotscan'] else 'arb'
     data_path = d['--dir']
+    cols = d['--cols']
+    cols = (0, 1) if cols is None else literal_eval(cols)
     pattern = d['--pattern']
     depth = int(d['--depth'])
+    verbose = d['--verbose']
+    show_axes = d['--showaxes']
+    folder_is_id = d['--folderisid']
     savefilename = d['--output']
     savefilename = 'out.txt' if savefilename is None else savefilename
     orien = d['--orientation'].upper()
     origin, xplus, yplus = orien[:2], orien[2], orien[3]
 
+    printif(d, verbose)
+
     # Get the list of files with hysteresis loop data in them
     # data_path = "/Users/nikolaj/Desktop/rzchowski/161016/0"
-    # data_path = r"C:\Users\rzchlab\Desktop\trial1_5x5_BFO_test_sample\trial1_5x5_BFO_test_sample"
+    # data_path = (r"C:\Users\rzchlab\Desktop\trial1_5x5_BFO_test_sample\"
+    #               "trial1_5x5_BFO_test_sample")
     datafiles = get_data_files(mode, data_path, pattern=pattern, depth=depth)
 
-    #savefilepath = join(data_path, "out.txt")
-    #file = open(savefilepath, "w")
+    if len(datafiles) == 0:
+        print('### No matching datafiles found ###')
+        print('Parameters:')
+        print('Path: ' + data_path)
+        print('Pattern: ' + pattern)
+        exit()
+
+    ppif(datafiles, verbose)
+
+    # savefilepath = join(data_path, "out.txt")
+    # file = open(savefilepath, "w")
     hyst_param_labels = ("x", "y",
                          "left_Hc", "right_Hc",
                          "top_Mr", "bot_Mr",
@@ -252,30 +333,37 @@ if __name__ == '__main__':
                          "right_sat(B)", "right_sat(V)",
                          "left_slope", "right_slope",
                          "area")
-    #headers = "".join("{:14}\t".format(s) for s in hyst_param_labels) + "\n"
-    #file.write(headers)
+    # headers = "".join("{:14}\t".format(s) for s in hyst_param_labels) + "\n"
+    # file.write(headers)
 
     mx, my = get_grid_xy(mode, datafiles)
-    fig, axarr = plt.subplots(mx, my)
+    fig, axarr = plt.subplots(mx, my, squeeze=False)
 
     mrems = np.zeros((mx, my))
     hcs = np.zeros((mx, my))
 
     hyst_params = {k: [] for k in hyst_param_labels}
 
-    for ax in axarr:
-        for curr in ax:
-            curr.spines["left"].set_visible(False)
-            curr.spines["right"].set_visible(False)
-            curr.spines["top"].set_visible(False)
-            curr.spines["bottom"].set_visible(False)
-            curr.xaxis.set_visible(False)
-            curr.yaxis.set_visible(False)
+#    if not isiterable(axarr):
+#        axarr = (axarr,)
+
+    if not show_axes:
+        for ax in axarr:
+            for curr in ax:
+                curr.spines["left"].set_visible(False)
+                curr.spines["right"].set_visible(False)
+                curr.spines["top"].set_visible(False)
+                curr.spines["bottom"].set_visible(False)
+                curr.xaxis.set_visible(False)
+                curr.yaxis.set_visible(False)
 
     for q, df in enumerate(datafiles):
-        print(df)
-        B, V = np.loadtxt(df, usecols=(0, 1), unpack=True, delimiter='\t',
+        printif('Plotting File {}: {}'.format(q, df), verbose)
+        B, V = np.loadtxt(df, usecols=cols, unpack=True, delimiter='\t',
                           skiprows=2)
+
+        # decrease data size
+        B, V = compress_data((B, V), n=10)
 
         # smooth data
         smoothed = [[], []]
@@ -302,21 +390,15 @@ if __name__ == '__main__':
         satleft = saturation_index(dB, dV3, positive_side=False)
 
         # Note that these are indices not values
-        lincept, rincept = intercept_indices(V)
+        lincept, rincept = incepts = intercept_indices(V)
         width = 10
 
-        lslope, rslope = (avg_gradient(B, V, i, width) for i in (lincept, rincept))
+        lslope, rslope = (avg_gradient(B, V, i, width) for i in (incepts))
         area = hyst_loop_area(B, V)
 
-        # find mrem using JIs algorithm. Should give same value as NRs method,
-        # might as well compute both and compare them. This one returns values
-        # not indices
+        # find mrem/Hc using
         mrem, mrem_inds = Mrem_of(B, V, ks=10)
-
-        # TODO: This needs to be checked still
-        hc = Hc_of(B, V)
-#        moreaccuratemrem = better_Mrem_of(B,V)
-#        moreaccuratehc = better_Hc_of(B,V)
+        hc, hc_inds = Hc_of(B, V)
 
         # write to output file
         if mode == 'scan':
@@ -346,18 +428,26 @@ if __name__ == '__main__':
         ax = axarr[i_ax, j_ax]
 
         # Title is coords in scan mode and filename in arb mode
+        if folder_is_id:
+            def title_func(x): return basename(dirname(x))
+        else:
+            title_func = basename
         if mode == 'scan':
             title = "{}, {}".format(x, y)
         elif mode == 'arb':
-            title = "{:.35}".format(basename(df))
+            title = "{:.35}".format(title_func(df))
+
         ax.set_title(title, fontsize=8)
 
         # plot data
+        # circles: Saturation values
+        # squares: Mrem values
+        # triangles: Hc values
         graph_data = ax.plot(b, v, 'g', alpha=.7)
         ax.plot(b[satright], v[satright], 'ro', alpha=.5)
         ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
-        # TODO: plot Hc, mRem(jji version)
         ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3)
+        ax.plot(B[hc_inds], V[hc_inds], 'm^', alpha=0.5, ms=5, lw=3)
 
         mrems[int(x)][int(y)] = abs(V[mrem_inds[0]] - V[mrem_inds[1]]) / 2
         hcs[int(x)][int(y)] = abs(B[lincept] - B[rincept]) / 2
@@ -371,75 +461,93 @@ if __name__ == '__main__':
         ax.plot(ltanx, ltany, 'b', linewidth=2)
         ax.plot(rtanx, rtany, 'r', linewidth=2)
 
+#        ax.hlines(v.mean(), xmin=b.min(), xmax=b.max())
+
+    plt.tight_layout()
 
     # plot hc and mrem
-    legend_string_hc="hc\n"
+    legend_string_hc = "hc\n"
     for y, line in enumerate(hcs):
         for x, val in enumerate(line):
             legend_string_hc += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
 
-    legend_string_mrem="mrem values\n"
+    legend_string_mrem = "mrem values\n"
     for y, line in enumerate(mrems):
         for x, val in enumerate(line):
             legend_string_mrem += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
 
     hc_text = fig.text(.91, 0.1, legend_string_hc)
-    mrem_text = fig.text(.91, 0.1, legend_string_mrem, visible = False)
+    mrem_text = fig.text(.91, 0.1, legend_string_mrem, visible=False)
 
-    def switch(label):
-        vals = []
-        recolor = False
-
-        if(label == 'hc'):
-            vals = mrems
-            check.labels[0].set_text('mrem')
-
-            recolor = True
-            hc_text.set_visible(False)
-            mrem_text.set_visible(False)
-
-            check.labels[1].set_text('show\nvalues')
-
-
-        if(label == 'mrem'):
-            vals = hcs
-            check.labels[0].set_text('hc')
-            recolor = True
-            hc_text.set_visible(False)
-            mrem_text.set_visible(False)
-
-            check.labels[1].set_text('show\nvalues')
-
-        if recolor:
-            for y, line in enumerate(axarr):
-                for x, curr in enumerate(line):
-                        curr.set_axis_bgcolor(str(vals[x][y]/np.max(vals)))
-
-
-        if(label == 'hide\nvalues'):
-            hc_text.set_visible(False)
-            mrem_text.set_visible(False)
-            check.labels[1].set_text('show\nvalues')
-
-        if(label == 'show\nvalues'):
-
-            if(check.labels[0].get_text() == 'hc'):
-                hc_text.set_visible(True)
-            if(check.labels[0].get_text() == 'mrem'):
-                mrem_text.set_visible(True)
-            check.labels[1].set_text('hide\nvalues')
-
-        plt.draw()
-
-    rax = plt.axes([0.01, 0.4, 0.095, 0.15])
-    check = CheckButtons(rax, ('hc', 'show\nvalues'),  (True, False))
-    check.on_clicked(switch)
-    switch('hc')
+#    def switch(label):
+#        vals = []
+#        recolor = False
+#
+#        if(label == 'hc'):
+#            vals = mrems
+#            check.labels[0].set_text('mrem')
+#
+#            recolor = True
+#            hc_text.set_visible(False)
+#            mrem_text.set_visible(False)
+#
+#            check.labels[1].set_text('show\nvalues')
+#
+#        if(label == 'mrem'):
+#            vals = hcs
+#            check.labels[0].set_text('hc')
+#            recolor = True
+#            hc_text.set_visible(False)
+#            mrem_text.set_visible(False)
+#
+#            check.labels[1].set_text('show\nvalues')
+#
+#        if recolor:
+#            for y, line in enumerate(axarr):
+#                for x, curr in enumerate(line):
+#                        curr.set_axis_bgcolor(str(vals[x][y]/np.max(vals)))
+#
+#        if(label == 'hide\nvalues'):
+#            hc_text.set_visible(False)
+#            mrem_text.set_visible(False)
+#            check.labels[1].set_text('show\nvalues')
+#
+#        if(label == 'show\nvalues'):
+#
+#            if(check.labels[0].get_text() == 'hc'):
+#                hc_text.set_visible(True)
+#            if(check.labels[0].get_text() == 'mrem'):
+#                mrem_text.set_visible(True)
+#            check.labels[1].set_text('hide\nvalues')
+#
+#        plt.draw()
+#
+#    rax = plt.axes([0.01, 0.4, 0.095, 0.15])
+#    check = CheckButtons(rax, ('hc', 'show\nvalues'),  (True, False))
+#    check.on_clicked(switch)
 
     savefilepath = join(data_path, savefilename)
     h0 = "{:1}\t{:1}\t".format(*hyst_param_labels[:2])
+    fmts = ["%1.0f", "%1.0f"] + ["%+.7e"] * (len(hyst_param_labels) - 2)
+
+    if mode == 'scan':
+        pass
+    elif mode == 'arb':
+        rowheaders = generate_rowheaders(datafiles, title_func)
+        rowh_w = length_of_longest_el(rowheaders)
+        h0 = " " * rowh_w + '\t' + h0
+        fmts = [":%{}s".format(rowh_w)] + fmts
+
+    line_fmtstr = ('{' + '}\t{:'.join(fmts) + '}')
+    line_fmtstr = line_fmtstr.replace('%', '').replace('s', '')
     header = h0 + "".join("{:14}\t".format(s) for s in hyst_param_labels[2:])
     savedata = np.array(list(hyst_params[col] for col in hyst_param_labels))
-    fmts = ["%3d", "%.1d"] + ["%+.7e"] * (len(hyst_param_labels) - 2)
-    np.savetxt(savefilepath, savedata.T, fmt=fmts, delimiter="\t",
-               header=header)
+
+    printif('Saving params to:\n%s' % savefilepath, verbose)
+    with open(savefilepath, 'w') as f:
+        f.write(header + '\n')
+        for rowh, rowd in zip(rowheaders, savedata.T):
+            f.write(line_fmtstr.format(rowh, *rowd) + '\n')
+
+#    np.savetxt(savefilepath, savedata.T, fmt=fmts, delimiter="\t",
+#               header=header)
