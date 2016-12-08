@@ -386,19 +386,22 @@ if __name__ == '__main__':
         # Find the index where saturation is reached on each side of the loop.
         # This is done by finding a the peak in the third derivative of V with
         # the largest/smallest B value (depending on the side of the loop).
-        satright = saturation_index(dB, dV3, positive_side=True)
-        satleft = saturation_index(dB, dV3, positive_side=False)
-
-        # Note that these are indices not values
-        lincept, rincept = incepts = intercept_indices(V)
-        width = 10
-
-        lslope, rslope = (avg_gradient(B, V, i, width) for i in (incepts))
-        area = hyst_loop_area(B, V)
+        dBr = dB[::-1]
+        dV3r = dV3[::-1]
+        N = len(dBr)
+        satright = N - 1 - saturation_index(dBr, dV3r, positive_side=True)
+        satleft = N - 1 - saturation_index(dBr, dV3r, positive_side=False)
 
         # find mrem/Hc using
         mrem, mrem_inds = Mrem_of(B, V, ks=10)
         hc, hc_inds = Hc_of(B, V)
+        
+        # Note that these are indices not values
+#        lincept, rincept = incepts = intercept_indices(V)
+        lincept, rincept = hc_inds
+        width = 10
+        lslope, rslope = (avg_gradient(B, V, i, width) for i in (hc_inds))
+        area = hyst_loop_area(B, V)
 
         # write to output file
         if mode == 'scan':
@@ -409,8 +412,8 @@ if __name__ == '__main__':
 
         hyst_params['x'].append(x)
         hyst_params['y'].append(y)
-        hyst_params['left_Hc'].append(B[lincept])
-        hyst_params['right_Hc'].append(B[rincept])
+        hyst_params['left_Hc'].append(B[hc_inds[1]])
+        hyst_params['right_Hc'].append(B[hc_inds[0]])
         hyst_params['top_Mr'].append(V[mrem_inds[0]])
         hyst_params['bot_Mr'].append(V[mrem_inds[1]])
         hyst_params['right_sat(B)'].append(B[satright])
@@ -444,10 +447,12 @@ if __name__ == '__main__':
         # squares: Mrem values
         # triangles: Hc values
         graph_data = ax.plot(b, v, 'g', alpha=.7)
-        ax.plot(b[satright], v[satright], 'ro', alpha=.5)
+        ax.plot(b[satright], v[satright], 'ro', alpha=.5, label='sat')
         ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
-        ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3)
-        ax.plot(B[hc_inds], V[hc_inds], 'm^', alpha=0.5, ms=5, lw=3)
+        ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3,
+                label='Mr')
+        ax.plot(B[hc_inds], V[hc_inds], 'm^', alpha=0.5, ms=5, lw=3,
+                label='Hc')
 
         mrems[int(x)][int(y)] = abs(V[mrem_inds[0]] - V[mrem_inds[1]]) / 2
         hcs[int(x)][int(y)] = abs(B[lincept] - B[rincept]) / 2
@@ -460,6 +465,9 @@ if __name__ == '__main__':
         rtany = [v[rincept]-ts*lslope, v[rincept]+ts*lslope]
         ax.plot(ltanx, ltany, 'b', linewidth=2)
         ax.plot(rtanx, rtany, 'r', linewidth=2)
+        
+        if q == 0:
+            ax.legend(loc='best', fontsize=8)
 
 #        ax.hlines(v.mean(), xmin=b.min(), xmax=b.max())
 
@@ -476,8 +484,8 @@ if __name__ == '__main__':
         for x, val in enumerate(line):
             legend_string_mrem += (str(x)+","+str(y)+":"+str(val)[0:4]+"\n")
 
-    hc_text = fig.text(.91, 0.1, legend_string_hc)
-    mrem_text = fig.text(.91, 0.1, legend_string_mrem, visible=False)
+#    hc_text = fig.text(.91, 0.1, legend_string_hc)
+#    mrem_text = fig.text(.91, 0.1, legend_string_mrem, visible=False)
 
 #    def switch(label):
 #        vals = []
