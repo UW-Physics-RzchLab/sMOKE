@@ -32,6 +32,8 @@ Options:
                                rows above (0, 0) and (0, j) is j columns to
                                the left of (0, 0).
                                [default: NWSE]
+    --smoothwidth=<int>        Width parameter for the gaussian smoother.
+                               [default: 20]
     --showaxes                 By default the axes around the loops are not
                                drawn. Pass this parameter to draw them.
     --verbose                  Print out more messages.
@@ -254,6 +256,30 @@ def saturation_index(x, y, positive_side=True):
     return extr_inds[condition][x_extr_ind]
 
 
+def saturation_indices_new(x, dy3):
+    return np.argmin(dy3), np.argmax(dy3)
+
+
+def get_threshold_y(heights, bins, thresh=0.25):
+    lbins = bins[:-1]
+    binw = bins[1] - bins[0]
+    igt0, ilt0 = lbins > 0, lbins < 0
+    xthresh = []
+    for half, dx, ax in zip((igt0, ilt0), (0.0, binw), (1.0, -1.0)):
+        hthresh = thresh * heights[half].max()
+        saturated = np.where(half & (heights > hthresh))
+        # dx is 0 for the gt0 side and binwidth for the lt0 side
+        xthresh.append(ax * min(abs(lbins[saturated])) + dx)
+    return xthresh
+
+
+def saturation_from_hist(x, y, bins=50, thresh=0.25):
+    heights, bins = np.histogram(y, bins=bins)
+    thresh_y = get_threshold_y(heights, bins, thresh=thresh)
+    y_saturations = (y[y > thresh_y[0]].mean(), y[y < thresh_y[1]].mean())
+    return y_saturations
+
+
 def intercept_indices(y):
     """Looks for the indices in y where the mean is crossed. If this
     condition is never met then it returns the middle of the array.
@@ -299,6 +325,7 @@ if __name__ == '__main__':
     cols = (0, 1) if cols is None else literal_eval(cols)
     pattern = d['--pattern']
     depth = int(d['--depth'])
+    smooth_width = literal_eval(d['--smoothwidth'])
     verbose = d['--verbose']
     show_axes = d['--showaxes']
     folder_is_id = d['--folderisid']
@@ -329,8 +356,7 @@ if __name__ == '__main__':
     hyst_param_labels = ("x", "y",
                          "left_Hc", "right_Hc",
                          "top_Mr", "bot_Mr",
-                         "left_sat(B)", "left_sat(V)",
-                         "right_sat(B)", "right_sat(V)",
+                         "pos_sat(V)", "neg_sat(V)",
                          "left_slope", "right_slope",
                          "area")
     # headers = "".join("{:14}\t".format(s) for s in hyst_param_labels) + "\n"
@@ -364,11 +390,13 @@ if __name__ == '__main__':
 
         # decrease data size
         B, V = compress_data((B, V), n=10)
+        from copy import deepcopy
+        Braw, Vraw = deepcopy(B), deepcopy(V)
 
         # smooth data
         smoothed = [[], []]
-        B = smoothed[0] = gaussian_filter(B, 20)
-        V = smoothed[1] = gaussian_filter(V, 20)
+        B = smoothed[0] = gaussian_filter(B, smooth_width, mode='wrap')
+        V = smoothed[1] = gaussian_filter(V, smooth_width, mode='wrap')
 
         # compute derivatives of data
         dB = smoothed[0]
@@ -376,26 +404,21 @@ if __name__ == '__main__':
         dV2 = gaussian_filter(np.gradient(dV), 10)
         dV3 = np.gradient(dV2)
 
-        # find saturation points, satright and satleft
-        high = np.max(dV3)/2
-        low = np.min(dV3)/2
-        mag = np.abs(high-low)
-        upper = high - mag/4
-        lower = low + mag/4
-
         # Find the index where saturation is reached on each side of the loop.
         # This is done by finding a the peak in the third derivative of V with
         # the largest/smallest B value (depending on the side of the loop).
-        dBr = dB[::-1]
-        dV3r = dV3[::-1]
-        N = len(dBr)
-        satright = N - 1 - saturation_index(dBr, dV3r, positive_side=True)
-        satleft = N - 1 - saturation_index(dBr, dV3r, positive_side=False)
+#        satright = saturation_index(dB, dV2, positive_side=True)
+#        satleft = saturation_index(dB, dV2, positive_side=False)
+#        satright = np.argmin(dV2)
+#        satleft = np.argmax(dV2)
+        satleft, satright = saturation_indices_new(B, dV2)
+
+        y_saturations = saturation_from_hist(B, V)
 
         # find mrem/Hc using
         mrem, mrem_inds = Mrem_of(B, V, ks=10)
         hc, hc_inds = Hc_of(B, V)
-        
+
         # Note that these are indices not values
 #        lincept, rincept = incepts = intercept_indices(V)
         lincept, rincept = hc_inds
@@ -416,10 +439,8 @@ if __name__ == '__main__':
         hyst_params['right_Hc'].append(B[hc_inds[0]])
         hyst_params['top_Mr'].append(V[mrem_inds[0]])
         hyst_params['bot_Mr'].append(V[mrem_inds[1]])
-        hyst_params['right_sat(B)'].append(B[satright])
-        hyst_params['right_sat(V)'].append(V[satright])
-        hyst_params['left_sat(B)'].append(B[satleft])
-        hyst_params['left_sat(V)'].append(V[satleft])
+        hyst_params['pos_sat(V)'].append(y_saturations[0])
+        hyst_params['neg_sat(V)'].append(y_saturations[1])
         hyst_params['area'].append(area)
         hyst_params['left_slope'].append(lslope)
         hyst_params['right_slope'].append(rslope)
@@ -446,13 +467,16 @@ if __name__ == '__main__':
         # circles: Saturation values
         # squares: Mrem values
         # triangles: Hc values
-        graph_data = ax.plot(b, v, 'g', alpha=.7)
-        ax.plot(b[satright], v[satright], 'ro', alpha=.5, label='sat')
-        ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
+        graph_data = ax.plot(B, V, 'g', alpha=.7)
+##       ax.twinx().plot(B, dV2, 'r', alpha=0.7)
+#        ax.plot(b[satright], v[satright], 'ro', alpha=.5, label='sat')
+#        ax.plot(b[satleft], v[satleft], 'bo', alpha=.5)
         ax.plot(B[mrem_inds], V[mrem_inds], 'ks', alpha=0.5, ms=5, lw=3,
                 label='Mr')
         ax.plot(B[hc_inds], V[hc_inds], 'm^', alpha=0.5, ms=5, lw=3,
                 label='Hc')
+        ax.hlines(y_saturations, min(B), max(B), linestyles='dashed',
+                  alpha=0.5)
 
         mrems[int(x)][int(y)] = abs(V[mrem_inds[0]] - V[mrem_inds[1]]) / 2
         hcs[int(x)][int(y)] = abs(B[lincept] - B[rincept]) / 2
@@ -465,11 +489,9 @@ if __name__ == '__main__':
         rtany = [v[rincept]-ts*lslope, v[rincept]+ts*lslope]
         ax.plot(ltanx, ltany, 'b', linewidth=2)
         ax.plot(rtanx, rtany, 'r', linewidth=2)
-        
+
         if q == 0:
             ax.legend(loc='best', fontsize=8)
-
-#        ax.hlines(v.mean(), xmin=b.min(), xmax=b.max())
 
     plt.tight_layout()
 
